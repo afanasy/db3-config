@@ -50,3 +50,10 @@ db3Config.push(config)
   }
 }
 ```
+
+## Testing
+
+```bash
+cp sample.env .env
+npm test
+```
