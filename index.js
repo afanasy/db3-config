@@ -1,7 +1,6 @@
 var
   db3 = require('db3'),
-  _ = require('underscore'),
-  Promise = require('bluebird')
+  _ = require('underscore')
 
 
 function Db3Config (opts) {
@@ -14,7 +13,6 @@ function Db3Config (opts) {
   opts.password = opts.password || ''
   this.opts = opts
   this.db = db3.connect(opts)
-  Promise.promisifyAll(this.db)
 }
 
 Db3Config.prototype.pull = pull
@@ -22,18 +20,26 @@ Db3Config.prototype.push = push
 
 function pull (done) {
   var
-    db3Config = this,
-    data = {}
+    db3Config = this
 
-  getTables(db3Config)
-    .then(describeTables(db3Config))
-    .then(formatOutput)
-    .then(function (output) {
-      done(null, output)
+  getTables(db3Config, function (err, tables) {
+    if (err) return done(err)
+    var
+      output = [],
+      count = 0,
+      target = tables.length
+
+    tables.forEach(function (table) {
+      describeTable(db3Config, table, function (err, fields) {
+        if (err) return done(err)
+        output.push(fields)
+
+        if (++count === target) {
+          return done(null, formatOutput(output))
+        }
+      })
     })
-    .catch(function (err) {
-      done(err)
-    })
+  })
 }
 
 function push (config, done) {
@@ -42,29 +48,26 @@ function push (config, done) {
 
 module.exports = Db3Config
 
-function getTables (db3Config) {
+function getTables (db3Config, done) {
   var key = 'Tables_in_' + db3Config.opts.database
-  return db3Config.db.queryAsync('show tables')
-    .then(function (tables) {
-      return tables.map(function (name) {
-        return name[key]
-      })
+  db3Config.db.query('show tables', function (err, tables) {
+    if (err) return done(err)
+    tables = tables.map(function (name) {
+      return name[key]
     })
+    return done(null, tables)
+  })
 }
 
-function describeTables (db3Config) {
-  return function (tables) {
-    return Promise.all(tables.map(function (table) {
-      var output = {table: table}
-      return db3Config.db.queryAsync('describe ' + table)
-        .then(function (fields) {
-          output.fields = fields.map(function (field) {
-            return formatField(field)
-          })
-          return output
-        })
-    }))
-  }
+function describeTable (db3Config, table, done) {
+  var output = {table: table}
+  return db3Config.db.query('describe ' + table, function (err, fields) {
+    if (err) return done(err)
+    output.fields = fields.map(function (field) {
+      return formatField(field)
+    })
+    done(null, output)
+  })
 }
 
 function formatField (field) {

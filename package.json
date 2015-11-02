@@ -27,7 +27,6 @@
     "expect.js": "^0.3.1"
   },
   "dependencies": {
-    "bluebird": "^3.0.0",
     "db3": "^2.0.1",
     "underscore": "^1.8.3"
   }

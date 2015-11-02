@@ -14,7 +14,7 @@ var
   }
 
 describe('Db3Config module', function () {
-  this.timeout(60 * 1000)
+  this.timeout(10 * 1000)
   describe('basic initialization', function () {
     it('always called using new', function () {
       var db3Config = Db3Config(opts)
