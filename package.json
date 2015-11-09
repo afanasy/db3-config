@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "db3": "^2.0.1",
+    "object-deep-diff": "^1.1.0",
     "underscore": "^1.8.3"
   }
 }
