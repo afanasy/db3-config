@@ -1,4 +1,5 @@
 require('dotenv').load()
+var _ = require('underscore')
 var
   expect = require('expect.js'),
   Db3Config = require('./index.js'),
@@ -14,44 +15,45 @@ var
     pull: { "table": { "user": { "field": { "id": true, "username": "text", "password": "varchar(32)", "new": "text", "subscribed": { "dataType": "tinyint(4)", "default": "0" } }, "key": { "subscribed": true } } } },
   }
 
-describe('Db3Config module', function () {
-  this.timeout(10 * 1000)
-  var db3Config
-  before(function(done) {
-    db3Config = new Db3Config(opts)
-    db3Config.db.dropTable('user', function (err) {
-      done()
-    })
-  });
-  describe('basic initialization', function () {
-    it('always called using new', function () {
-      expect(db3Config.constructor).to.be(Db3Config)
-    })
-    it('throws error when required parameters are not provided', function () {
-      expect(Db3Config).withArgs().to.throwError()
-    })
-  })
-  describe('push method', function () {
-    it('alter db from JSON', function (done) {
-      db3Config.push(alteredConfig, function (err, data) {
-        if (err) return done(err)
-        db3Config.pull(function (err, newLocalDb) {
-          if (err) return done(err)
-          expect(newLocalDb).to.eql(alteredConfig)
-          done()
-        })
+Db3Config(opts)
+
+describe('db3Config', function () {
+  describe('#keyQuery', function () {
+    _.each({
+      'key `userId`(`userId`)': {id: 'userId'},
+      'key `userId`(`userId`)': {id: 'userId', field: 'userId'},
+      'key `name`(`name`(1))': {id: 'name', field: {name: 1}},
+      'unique key `name`(`name`(1))': {id: 'name', field: {name: 1}, unique: true},
+    }, function (value, key) {
+      it(JSON.stringify(value), function () {
+        expect(key).to.be(Db3Config.qs.key(value))
       })
     })
   })
-  describe('pull method', function () {
-    it('reads data from db into JSON', function (done) {
-      db3Config.pull(function (err, data) {
-        if (err) {
-          return done(err)
-        }
-        expect(data.table.user.field.id).to.be.ok
-        expect(data).to.eql(expected.pull)
-        done()
+  describe('#fieldQuery', function () {
+    _.each({
+      '`id` bigint primary key auto_increment': {id: 'id'},
+      '`name` text': {id: 'name'},
+      '`userId` bigint': {id: 'userId'},
+      '`hash` varchar(32)': {id: 'hash', dataType: 'varchar'}
+    }, function (value, key) {
+      it(JSON.stringify(value), function () {
+        expect(key).to.be(Db3Config.qs.field(value))
+      })
+    })
+  })
+  describe('#createTable', function () {
+    _.each({
+      'create table `user` (`id` bigint primary key auto_increment, `name` text)': {id: 'user', field: {id: true}},
+      'create table `user` (`id` bigint primary key auto_increment)': {id: 'user', noName: true},
+      'create table `user` (`name` text)': {id: 'user', noId: true},
+      'create table `user` (`id` bigint primary key auto_increment, `name` text, `userId` bigint)': {id: 'user', field: ['userId']},
+      'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, noName: true, field: ['userId'], key: {userId: true}},
+      'create table `user` (`name` text, key `name`(`name`(1)))': {id: 'user', noId: true, key: {name: 1}},
+      'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, noName: true, field: 'userId', key: 'userId'},
+    }, function (value, key) {
+      it(JSON.stringify(value), function () {
+        expect(key).to.be(Db3Config.qs.createTable(value))
       })
     })
   })

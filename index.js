@@ -1,8 +1,40 @@
-var
-  db3 = require('db3'),
-  qs = require('querystring'),
-  _ = require('underscore')
+var _ = require('underscore')
+var async = require('async')
+var ucfirst = require('ucfirst')
+var db3 = require('db3')
+var db
 
+var pull = function (db, done) {
+  var dbConfig = {table: {}}
+  db.query('select database() as db', function (err, data) {
+    db.select({table: 'information_schema.columns', where: {table_schema: data[0].db}, orderBy: ['table_name', 'ordinal_position']}, function (err, data) {
+      _.each(data, function (data) {
+        var field = {dataType: data.DATA_TYPE}
+        if (data.DATA_TYPE == 'varchar')
+          field.size = data.CHARACTER_MAXIMUM_LENGTH
+        if (data.IS_NULLABLE == 'NO')
+          field.notNull = true
+        if (data.COLUMN_DEFAULT != null)
+          field.default = data.COLUMN_DEFAULT
+        if (field.dataType.match(/int/))
+          field.default = +field.default
+        dbConfig.table[data.TABLE_NAME] = dbConfig.table[data.TABLE_NAME] || {field: {}}
+        dbConfig.table[data.TABLE_NAME].field[data.COLUMN_NAME] = field
+      })
+      done(err, dbConfig)
+    })
+  })
+}
+
+var push = function (db, dbConfig, done) {
+  async.each(_.keys(dbConfig.table), function (tableId, done) {
+    var table = _.extend(dbConfig.table[tableId], {id: tableId})
+    console.log(createTable(table))
+    db.query(createTable(table), function (err, data) {
+      done(err, data)
+    })
+  }, done)
+}
 
 function Db3Config (opts) {
   if (this.constructor !== Db3Config)
@@ -11,7 +43,15 @@ function Db3Config (opts) {
   opts.user = opts.user || 'root'
   opts.password = opts.password || ''
   this.opts = opts
-  this.db = db3.connect(opts)
+  db = this.db = db3.connect(opts)
+  /*
+  pull(db, function (err, data) {
+    console.log(JSON.stringify(data, null, '  '))
+    db.dropTable('user', function (err, data) {
+      push(db, require('./sample'), _.noop)
+    })
+  })
+  */
 }
 
 Db3Config.prototype.pull = function pull (done) {
@@ -98,152 +138,108 @@ Db3Config.prototype.push = function push (config, done) {
 
 module.exports = Db3Config
 
-function getTables (db3Config, done) {
-  var key = 'Tables_in_' + db3Config.opts.database
-  db3Config.db.query('show tables', function (err, tables) {
-    if (err) return done(err)
-    tables = tables.map(function (name) {
-      return name[key]
-    })
-    return done(null, tables)
-  })
-}
-
-function describeTable (db3Config, table, done) {
-  var output = {table: table}
-  return db3Config.db.query('describe ' + table, function (err, fields) {
-    if (err) return done(err)
-    output.fields = fields.map(function (field) {
-      return formatField(field)
-    })
-    done(null, output)
-  })
-}
-
-function formatField (field) {
-  var output = { key: field.Field }, value
-  if (field.Key === 'PRI') {
-    value = true
-  } else if (field.Default === null && field.Key === '') {
-    value = field.Type
-  } else {
-    value = {
-      dataType: field.Type,
-      default: field.Default
-    }
-    if (field.Key === 'MUL') {
-      value.key = true
-    }
-  }
-  output.value = value
-  return output
-}
-
-function formatOutput (tables) {
-  var output = {
-    table: {}
-  }
-  tables.forEach(function (table) {
-    var field = {}, key = {}
-    table.fields.forEach(function (innerField) {
-      if (innerField.value && innerField.value.key) {
-        key[innerField.key] = true
-        delete innerField.value.key
+var expand = {
+  toList: function (list, key) {
+    var value = list[key]
+    if (value === true)
+      value = key
+    if (_.isNaN(value) || _.isNull(value) || _.isUndefined(value) || _.isNumber(value) || _.isBoolean(value) || _.isString(value))
+      value = [value]
+    if (_.isArray(value))
+      value = _.mapObject(_.invert(value), function () {return true})
+    list[key] = value
+    return value
+  },
+  field: function (value, key, list) {
+    if (value === true)
+      value = {}
+    if (_.isString(value))
+      value = {dataType: value}
+    if (key)
+      value.id = key
+    if (value.id.match(/Id$/))
+      _.defaults(value, {dataType: 'bigint'})
+    if (value.id == 'id')
+      _.defaults(value, {dataType: 'bigint', primaryKey: true, autoIncrement: true})
+    if (value.id == 'name')
+      _.defaults(value, {dataType: 'text'})
+    if (value.dataType == 'varchar')
+      _.defaults(value, {size: 32})
+    if (list)
+      list[key] = value
+    return value
+  },
+  key: function (value, key, list) {
+    if (value === true)
+      value = {}
+    if (_.isNumber(value))
+      value = {field: _.object([[key, value]])}
+    if (key)
+      value.id = key
+    if (!value.field)
+      value.field = value.id
+    expand.toList(value, 'field')
+    if (list)
+      list[key] = value
+    return value
+  },
+  table: function (value, key, list) {
+    if (key)
+      value.id = key
+    value.field = value.field || []
+    expand.toList(value, 'field')
+    if (value.key)
+      expand.toList(value, 'key')
+    _.each(['name', 'id'], function (key) {
+      if (!value['no' + ucfirst(key)]) {
+        var field = _.object([[key, value.field[key] || true]])
+        value.field = _.extend(field, value.field)
       }
-
-      field[innerField.key] = innerField.value
     })
-    output.table[table.table] = {
-      field: field,
-      key: key,
-    }
-  })
-  return output
+  }
 }
 
-function createQuery(fields, keys) {
-  keys = keys || {}
-  var
-    queries = [],
-    queryKeys = []
-
-  _.each(fields, function (attr, field) {
-
-    // create array, later will be joined
-    var query = ['`' + field + '`']
-
-    // if true, field is primary key
-    if (attr === true) {
-      query.push('bigint(20) NOT NULL AUTO_INCREMENT')
-      queryKeys.push('PRIMARY KEY (`' + field + '`)')
-
-    // if string, field is data type
-    } else if (_.isString(attr)) {
-      query.push(attr)
-
-    // if object, create based on key / property
-    } else if (_.isObject(attr)) {
-      var dataType = attr.dataType || 'text'
-      query.push(dataType)
-
-      // unless specified, always put not null
-      if (attr.notNull === false) query.push('NOT NULL')
-      if (_.has(attr, 'default')) query.push('DEFAULT ' + qs.escape(attr.default))
-    }
-
-    // if field has key option
-    if (_.has(keys, field)) {
-      var attr = keys[field]
-
-      // if true, field is indexed
-      if (attr === true) {
-        queryKeys.push('KEY `' + field + '` (`' + field + '`)')
-
-      // if object, check if it is unique index
-      } else if (_.isObject(attr)) {
-        var
-          keyFields = [],
-          keyType = 'KEY'
-
-        // if no field option, use field name
-        if (!_.has(attr, 'field')) {
-          keyFields = [field]
-
-        // if there is field option, find field name
-        } else {
-
-          // if true, use field name
-          if (attr.field === true) {
-            keyFields.push(field)
-
-          // if string, use it as field name
-          } else if (_.isString(attr.field)) {
-            keyFields.push(attr.field)
-
-          // if array, use all
-          } else if (_.isArray(attr.field)) {
-            keyFields = keyFields.concat(attr.field)
-          }
-        }
-
-        if (attr.unique)
-          keyType = 'UNIQUE KEY'
-        queryKeys.push(keyType + ' `' + field + '` (`' + keyFields.join('`, `') + '`)')
-
-      }
-    }
-    queries.push(query.join(' '))
-  })
-  queries = queries.concat(queryKeys)
-  return queries
+var qs = {
+  field: function (field) {
+    expand.field(field)
+    var query = db.format('??', field.id) + ' ' + field.dataType
+    if (field.size)
+      query += '(' + field.size + ')'
+    if (field.notNull)
+      query += ' not null'
+    if (!_.isUndefined(field.default) && (field.dataType != 'text'))
+      query += db.format(' default ?', field.default)
+    if (field.primaryKey)
+      query += ' primary key'
+    if (field.autoIncrement)
+      query += ' auto_increment'
+    return query
+  },
+  key: function (key) {
+    expand.key(key)
+    var query = ''
+    if (key.unique)
+      query += 'unique '
+    query += 'key ' + db.format('??', key.id) + '(' +
+    _.map(key.field, function (value, key) {
+      var query = db.format('??', key)
+      if (_.isNumber(value))
+        query += '(' + value + ')'
+      return query
+    }).join(', ') + ')'
+    return query
+  },
+  createTable: function (table) {
+    expand.table(table)
+    return 'create table `' + table.id + '` (' +
+      [].concat(
+        _.map(table.field, function (value, key) {return qs.field(expand.field(value, key, table.field))}),
+        _.map(table.key, function (value, key) {return qs.key(expand.key(value, key, table.key))})
+      ).join(', ') + ')'
+  }
 }
 
-function create(table) {
-  var query = 'CREATE table `' + table.id + '` (' +
-    createQuery(table.field, table.key).join(', ') +
-    ') ENGINE=myisam'
-  return query
-}
+module.exports.qs = qs
 
 function add(table, fields) {
   var query = 'ALTER TABLE `' + table + '` ADD ' +

@@ -27,8 +27,10 @@
     "expect.js": "^0.3.1"
   },
   "dependencies": {
-    "db3": "^2.0.1",
-    "object-deep-diff": "^1.1.0",
-    "underscore": "^1.8.3"
+    "async": "1.5.2",
+    "db3": "2.2.3",
+    "object-deep-diff": "1.1.0",
+    "ucfirst": "1.0.0",
+    "underscore": "1.8.3"
   }
 }
