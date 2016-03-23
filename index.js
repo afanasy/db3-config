@@ -1,10 +1,15 @@
 var _ = require('underscore')
 var async = require('async')
 var ucfirst = require('ucfirst')
-var db3 = require('db3')
+var chalk = require('chalk')
 var db
 
-var pull = function (db, done) {
+module.exports = function (d) {
+  db = d
+  return module.exports
+}
+
+module.exports.pull = function (done) {
   var dbConfig = {table: {}}
   db.query('select database() as db', function (err, data) {
     db.select({table: 'information_schema.columns', where: {table_schema: data[0].db}, orderBy: ['table_name', 'ordinal_position']}, function (err, data) {
@@ -26,127 +31,73 @@ var pull = function (db, done) {
   })
 }
 
-var push = function (db, dbConfig, done) {
-  async.each(_.keys(dbConfig.table), function (tableId, done) {
-    var table = _.extend(dbConfig.table[tableId], {id: tableId})
-    console.log(createTable(table))
-    db.query(createTable(table), function (err, data) {
-      done(err, data)
+module.exports.diff = function (config, done) {
+  var diff = {table: {}}
+  expand.db(config)
+  var end = function (err, dbConfig) {
+    //expand.db(dbConfig)
+    _.each(_.difference(_.keys(config.table), _.keys(dbConfig.table)), function (tableId) {
+      diff.table[tableId] = {create: true}
     })
+    _.each(_.difference(_.keys(dbConfig.table), _.keys(config.table)), function (tableId) {
+      diff.table[tableId] = {drop: true}
+    })
+    _.each(config.table, function (table, tableId) {
+      if (diff.table[tableId])
+        return
+      diff.table[tableId] = {}
+      _.each(['field', 'key'], function (fieldKey) {
+        diff.table[tableId][fieldKey] = {}
+        _.each(_.difference(_.keys(table[fieldKey]), _.keys(dbConfig.table[tableId][fieldKey])), function (id) {
+          diff.table[tableId].alter = true
+          diff.table[tableId][fieldKey][id] = {alter: 'add'}
+        })
+        _.each(_.difference(_.keys(dbConfig.table[tableId][fieldKey]), _.keys(table[fieldKey])), function (id) {
+          diff.table[tableId].alter = true
+          diff.table[tableId][fieldKey][id] = {alter: 'drop'}
+        })
+      })
+    })
+    done(err, diff)
+  }
+  if (config.diff)
+    return end(null, config.diff)
+  module.exports.pull(end)
+}
+
+module.exports.push = function (diff, done) {
+  expand.db(diff)
+  async.eachSeries(_.keys(diff.table), function (tableId, done) {
+    var table = diff.table[tableId]
+    var icon = function (action) {
+      if (action == 'ok')
+        return chalk.green('✓')
+      if (action == 'drop')
+        return chalk.red('×')
+      return chalk.yellow('!')
+    }
+    var action = _.find(['create', 'drop', 'alter'], function (d) {return table[d]})
+    if (!action) {
+      console.log(icon('ok'), tableId)
+      return done()
+    }
+    console.log(icon(action), tableId)
+    console.log(qs[action + 'Table'](table))
+    done()
   }, done)
 }
 
-function Db3Config (opts) {
-  if (this.constructor !== Db3Config)
-    return new Db3Config(opts)
-  opts.host = opts.host || 'localhost'
-  opts.user = opts.user || 'root'
-  opts.password = opts.password || ''
-  this.opts = opts
-  db = this.db = db3.connect(opts)
-  /*
-  pull(db, function (err, data) {
-    console.log(JSON.stringify(data, null, '  '))
-    db.dropTable('user', function (err, data) {
-      push(db, require('./sample'), _.noop)
-    })
-  })
-  */
-}
-
-Db3Config.prototype.pull = function pull (done) {
-  var db3Config = this
-
-  getTables(db3Config, function (err, tables) {
-    if (err) return done(err)
-    var
-      output = [],
-      count = 0,
-      target = tables.length
-
-    if (!tables.length)
-      return done(null, formatOutput([]))
-    tables.forEach(function (table) {
-      describeTable(db3Config, table, function (err, fields) {
-        if (err) return done(err)
-        output.push(fields)
-
-        if (++count === target) {
-          return done(null, formatOutput(output))
-        }
-      })
-    })
-  })
-}
-
-Db3Config.prototype.push = function push (config, done) {
-  var
-    db3Config = this,
-    db = { table: { } },
-    queries = []
-
-  db3Config.pull(function (err, localDb) {
-    _.each(config.table, function (config, table) {
-      if (_.has(config, 'field')) {
-        db.table[table] = _.pick(config, ['field', 'key'])
-      }
-    })
-    _.each(db.table, function (table, id) {
-
-      // if not present in old db, create
-      if (!localDb.table[id]) {
-        db.table[id].id = id
-        queries.push(create(table))
-
-      // table presents in old db
-      } else {
-
-        // check for new field in new config
-        _.each(db.table[id].field, function (field, fieldId) {
-
-          // if new field not present in local db, add
-          if (!localDb.table[id].field[fieldId]) {
-            var fieldObj = {}
-            fieldObj[fieldId] = field
-            queries.push(add(id, fieldObj))
-          }
-        })
-
-        // check for old local db
-        _.each(localDb.table[id].field, function (field, fieldId) {
-
-          // if old field not present in new config, drop
-          if (!db.table[id].field[fieldId]) {
-            queries.push(drop(id, fieldId))
-          }
-        })
-      }
-    })
-    var
-      count = 0,
-      target = queries.length
-    queries.forEach(function (query) {
-      db3Config.db.query(query, function (err) {
-        if (err) return done(err)
-        if (++count === target) {
-          return done()
-        }
-      })
-    })
-  })
-}
-
-module.exports = Db3Config
-
 var expand = {
-  toList: function (list, key) {
-    var value = list[key]
+  toList: function (list, key, expandChild) {
+    var value = list[key] || []
     if (value === true)
       value = key
     if (_.isNaN(value) || _.isNull(value) || _.isUndefined(value) || _.isNumber(value) || _.isBoolean(value) || _.isString(value))
       value = [value]
     if (_.isArray(value))
       value = _.mapObject(_.invert(value), function () {return true})
+    if (expandChild)
+      _.each(value, expand[key])
     list[key] = value
     return value
   },
@@ -161,10 +112,9 @@ var expand = {
       _.defaults(value, {dataType: 'bigint'})
     if (value.id == 'id')
       _.defaults(value, {dataType: 'bigint', primaryKey: true, autoIncrement: true})
-    if (value.id == 'name')
-      _.defaults(value, {dataType: 'text'})
     if (value.dataType == 'varchar')
       _.defaults(value, {size: 32})
+    _.defaults(value, {dataType: 'text'})
     if (list)
       list[key] = value
     return value
@@ -184,18 +134,29 @@ var expand = {
     return value
   },
   table: function (value, key, list) {
+    if (value === true)
+      value = {}
     if (key)
       value.id = key
     value.field = value.field || []
     expand.toList(value, 'field')
-    if (value.key)
-      expand.toList(value, 'key')
     _.each(['name', 'id'], function (key) {
       if (!value['no' + ucfirst(key)]) {
         var field = _.object([[key, value.field[key] || true]])
         value.field = _.extend(field, value.field)
       }
     })
+    _.each(value.field, expand.field)
+
+    if (value.key)
+      expand.toList(value, 'key', true)
+
+    if (list)
+      list[key] = value
+    return value
+  },
+  db: function (value, key, list) {
+    expand.toList(value, 'table', true)
   }
 }
 
@@ -231,24 +192,24 @@ var qs = {
   },
   createTable: function (table) {
     expand.table(table)
-    return 'create table `' + table.id + '` (' +
+    return db.format('create table ?? ', table.id) + '(' +
       [].concat(
-        _.map(table.field, function (value, key) {return qs.field(expand.field(value, key, table.field))}),
-        _.map(table.key, function (value, key) {return qs.key(expand.key(value, key, table.key))})
+        _.map(table.field, function (value, key) {return qs.field(value)}),
+        _.map(table.key, function (value, key) {return qs.key(value)})
       ).join(', ') + ')'
+  },
+  dropTable: function (table) {
+    expand.table(table)
+    return db.format('drop table ?? ', table.id)
+  },
+  alterTable: function (table) {
+    expand.table(table)
+    return db.format('alter table ?? ', table.id) +
+    [].concat(
+      _.map(_.filter(table.field, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.field(d)}),
+      _.map(_.filter(table.key, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.key(d)})
+    ).join(', ')
   }
 }
 
 module.exports.qs = qs
-
-function add(table, fields) {
-  var query = 'ALTER TABLE `' + table + '` ADD ' +
-    createQuery(fields).join(', ADD ')
-  return query
-}
-
-function drop(table, fields) {
-  fields = _.isArray(fields) ? fields : [fields]
-  var query = 'ALTER TABLE `' + table + '` DROP `' + fields.join('`, DROP `') + '`'
-  return query
-}

@@ -4,15 +4,10 @@ Db3 config is a tool for syncing SQL database structure with JSON config.
 ## Why do I need it?
 To store your database structure as JSON and sync it with real database.
 
-## new
+## Init
 ```js
-var Db3Config = require('db3-config')
-var db3Config = new Db3Config({
-  host: 'localhost',
-  user: 'me',
-  password: 'secret',
-  database: 'my_db'
-})
+var db = require('db3').connect()
+var db3Config = require('db3-config')(db)
 ```
 
 ## .pull(done)
@@ -23,10 +18,18 @@ db3Config.pull(function (err, data) {
 })
 ```
 
-## .push(config)
-Reads JSON and updates tables accordingly.
+## .diff(config, done)
+Calculates diff
 ```js
-db3Config.push(config)
+db3Config.diff(config, function (err, data) {
+  //data is diff
+})
+```
+
+## .push(diff, done)
+Apply diff to the db
+```js
+db3Config.push(diff, function (err) {})
 ```
 
 ## Config format
@@ -49,11 +52,4 @@ db3Config.push(config)
     }
   }
 }
-```
-
-## Testing
-
-```bash
-cp sample.env .env
-npm test
 ```
