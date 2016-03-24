@@ -189,12 +189,8 @@ var expand = {
       value.id = key
     value.field = value.field || []
     expand.toList(value, 'field')
-    _.each(['name', 'id'], function (key) {
-      if (!value['no' + ucfirst(key)]) {
-        var field = _.object([[key, value.field[key] || true]])
-        value.field = _.extend(field, value.field)
-      }
-    })
+    if (!value.noId)
+      value.field = _.extend(_.object([['id', value.field.id || true]]), value.field)
     _.each(value.field, expand.field)
 
     if (value.key)

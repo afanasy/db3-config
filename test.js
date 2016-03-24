@@ -33,13 +33,13 @@ describe('db3Config', function () {
     })
     describe('#createTable', function () {
       _.each({
-        'create table `user` (`id` bigint primary key auto_increment, `name` text)': {id: 'user', field: {id: true}},
-        'create table `user` (`id` bigint primary key auto_increment)': {id: 'user', noName: true},
-        'create table `user` (`name` text)': {id: 'user', noId: true},
-        'create table `user` (`id` bigint primary key auto_increment, `name` text, `userId` bigint)': {id: 'user', field: ['userId']},
-        'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, noName: true, field: ['userId'], key: {userId: true}},
-        'create table `user` (`name` text, key `name`(`name`(1)))': {id: 'user', noId: true, key: {name: 1}},
-        'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, noName: true, field: 'userId', key: 'userId'}
+        'create table `user` (`id` bigint primary key auto_increment, `name` text)': {id: 'user', field: {id: true, name: true}},
+        'create table `user` (`id` bigint primary key auto_increment)': {id: 'user'},
+        'create table `user` (`name` text)': {id: 'user', noId: true, field: 'name'},
+        'create table `user` (`id` bigint primary key auto_increment, `userId` bigint)': {id: 'user', field: ['userId']},
+        'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, field: ['userId'], key: {userId: true}},
+        'create table `user` (`name` text, key `name`(`name`(1)))': {id: 'user', noId: true, field: 'name', key: {name: 1}},
+        'create table `user` (`userId` bigint, key `userId`(`userId`))': {id: 'user', noId: true, field: 'userId', key: 'userId'}
       },
       function (value, key) {
         it(JSON.stringify(value), function () {
@@ -67,17 +67,13 @@ describe('db3Config', function () {
           table: {
             user: {
               create: true,
-              id: "user",
+              id: 'user',
               field: {
                 id: {
-                  id: "id",
-                  dataType: "bigint",
+                  id: 'id',
+                  dataType: 'bigint',
                   primaryKey: true,
                   autoIncrement: true
-                },
-                name: {
-                  id: "name",
-                  dataType: "text"
                 }
               }
             },
@@ -91,8 +87,8 @@ describe('db3Config', function () {
         config: {
           table: {
             user: {
-              field: 'user',
-              key: 'user'
+              field: 'userId',
+              key: 'userId'
             }
           }
         },
@@ -106,30 +102,25 @@ describe('db3Config', function () {
             user: {
               field: {
                 id: {
-                  alter: "add",
-                  id: "id",
-                  dataType: "bigint",
+                  alter: 'add',
+                  id: 'id',
+                  dataType: 'bigint',
                   primaryKey: true,
                   autoIncrement: true
                 },
-                name: {
-                  alter: "add",
-                  id: "name",
-                  dataType: "text"
-                },
-                user: {
-                  alter: "add",
-                  id: "user",
-                  dataType: "text"
+                userId: {
+                  alter: 'add',
+                  id: 'userId',
+                  dataType: 'bigint'
                 }
               },
               alter: true,
               key: {
-                user: {
-                  alter: "add",
-                  id: "user",
+                userId: {
+                  alter: 'add',
+                  id: 'userId',
                   field: {
-                    user: true
+                    userId: true
                   }
                 }
               }
