@@ -2,70 +2,95 @@ var _ = require('underscore')
 var async = require('async')
 var ucfirst = require('ucfirst')
 var chalk = require('chalk')
-var db
+var format = require('sqlstring').format
 
-module.exports = function (d) {
-  db = d
-  return module.exports
+var Db3Config = module.exports = function (d) {
+  if (this.constructor !== Db3Config)
+    return new Db3Config(d)
+  this.db = d
+  this.qs = qs
 }
 
-module.exports.pull = function (done) {
+Db3Config.prototype.pull = function (done) {
+  var db = this.db
   var dbConfig = {table: {}}
-  db.query('select database() as db', function (err, data) {
-    db.select({table: 'information_schema.columns', where: {table_schema: data[0].db}, orderBy: ['table_name', 'ordinal_position']}, function (err, data) {
-      _.each(data, function (data) {
-        var field = {dataType: data.DATA_TYPE}
-        if (data.DATA_TYPE == 'varchar')
-          field.size = data.CHARACTER_MAXIMUM_LENGTH
-        if (data.IS_NULLABLE == 'NO')
-          field.notNull = true
-        if (data.COLUMN_DEFAULT != null)
-          field.default = data.COLUMN_DEFAULT
-        if (field.dataType.match(/int/))
-          field.default = +field.default
-        dbConfig.table[data.TABLE_NAME] = dbConfig.table[data.TABLE_NAME] || {field: {}}
-        dbConfig.table[data.TABLE_NAME].field[data.COLUMN_NAME] = field
+  var database
+  async.series([
+    function (done) {
+      db.query('select database() as db', function (err, data) {
+        database = data[0].db
+        done()
       })
-      done(err, dbConfig)
-    })
+    },
+    function (done) {
+      db.select({table: 'information_schema.columns', where: {table_schema: database}, orderBy: ['table_name', 'ordinal_position']}, function (err, data) {
+        _.each(data, function (data) {
+          var field = {dataType: data.DATA_TYPE}
+          if (data.DATA_TYPE == 'varchar')
+            field.size = data.CHARACTER_MAXIMUM_LENGTH
+          if (data.IS_NULLABLE == 'NO')
+            field.notNull = true
+          if (data.COLUMN_DEFAULT != null)
+            field.default = data.COLUMN_DEFAULT
+          if (field.dataType.match(/int/))
+            field.default = +field.default
+          dbConfig.table[data.TABLE_NAME] = dbConfig.table[data.TABLE_NAME] || {field: {}}
+          dbConfig.table[data.TABLE_NAME].field[data.COLUMN_NAME] = field
+        })
+        done()
+      })
+    },
+    function (done) {
+      db.select({table: 'information_schema.statistics', where: {table_schema: database, index_name: {'!=': 'PRIMARY'}}, orderBy: ['table_name', 'index_name', 'seq_in_index']}, function (err, data) {
+        _.each(data, function (data) {
+          dbConfig.table[data.TABLE_NAME].key = dbConfig.table[data.TABLE_NAME].key || {}
+          dbConfig.table[data.TABLE_NAME].key[data.INDEX_NAME] = dbConfig.table[data.TABLE_NAME].key[data.INDEX_NAME] || {field: []}
+          dbConfig.table[data.TABLE_NAME].key[data.INDEX_NAME].field.push(data.COLUMN_NAME)
+          if (!+data.NON_UNIQUE)
+            dbConfig.table[data.TABLE_NAME].key[data.INDEX_NAME].unique = true
+        })
+        done()
+      })
+    }
+  ],
+  function (err) {
+    done(err, dbConfig)
   })
 }
 
-module.exports.diff = function (config, done) {
+Db3Config.prototype.diff = function (config, dbConfig) {
   var diff = {table: {}}
   expand.db(config)
-  var end = function (err, dbConfig) {
-    //expand.db(dbConfig)
-    _.each(_.difference(_.keys(config.table), _.keys(dbConfig.table)), function (tableId) {
-      diff.table[tableId] = {create: true}
-    })
-    _.each(_.difference(_.keys(dbConfig.table), _.keys(config.table)), function (tableId) {
-      diff.table[tableId] = {drop: true}
-    })
-    _.each(config.table, function (table, tableId) {
-      if (diff.table[tableId])
-        return
-      diff.table[tableId] = {}
-      _.each(['field', 'key'], function (fieldKey) {
-        diff.table[tableId][fieldKey] = {}
-        _.each(_.difference(_.keys(table[fieldKey]), _.keys(dbConfig.table[tableId][fieldKey])), function (id) {
-          diff.table[tableId].alter = true
-          diff.table[tableId][fieldKey][id] = {alter: 'add'}
-        })
-        _.each(_.difference(_.keys(dbConfig.table[tableId][fieldKey]), _.keys(table[fieldKey])), function (id) {
-          diff.table[tableId].alter = true
-          diff.table[tableId][fieldKey][id] = {alter: 'drop'}
-        })
+  _.each(_.difference(_.keys(config.table), _.keys(dbConfig.table)), function (tableId) {
+    diff.table[tableId] = _.extend({create: true}, config.table[tableId])
+  })
+  _.each(_.difference(_.keys(dbConfig.table), _.keys(config.table)), function (tableId) {
+    diff.table[tableId] = {drop: true}
+  })
+  _.each(config.table, function (table, tableId) {
+    if (diff.table[tableId])
+      return
+    diff.table[tableId] = {}
+    _.each(['field', 'key'], function (fieldKey) {
+      diff.table[tableId][fieldKey] = {}
+      _.each(_.difference(_.keys(table[fieldKey]), _.keys(dbConfig.table[tableId][fieldKey])), function (id) {
+        diff.table[tableId].alter = true
+        diff.table[tableId][fieldKey][id] = _.extend({alter: 'add'}, table[fieldKey][id])
+      })
+      _.each(_.difference(_.keys(dbConfig.table[tableId][fieldKey]), _.keys(table[fieldKey])), function (id) {
+        diff.table[tableId].alter = true
+        diff.table[tableId][fieldKey][id] = {alter: 'drop'}
       })
     })
-    done(err, diff)
-  }
-  if (config.diff)
-    return end(null, config.diff)
-  module.exports.pull(end)
+  })
+  return diff
 }
 
-module.exports.push = function (diff, done) {
+Db3Config.prototype.push = function (diff, done) {
+  var db = this.db
+  _.defaults(diff, {
+    pushLog: _.noop
+  })
   expand.db(diff)
   async.eachSeries(_.keys(diff.table), function (tableId, done) {
     var table = diff.table[tableId]
@@ -78,13 +103,27 @@ module.exports.push = function (diff, done) {
     }
     var action = _.find(['create', 'drop', 'alter'], function (d) {return table[d]})
     if (!action) {
-      console.log(icon('ok'), tableId)
+      diff.pushLog(icon('ok'), tableId)
       return done()
     }
-    console.log(icon(action), tableId)
-    console.log(qs[action + 'Table'](table))
-    done()
+    var query = qs[action + 'Table'](table)
+    diff.pushLog(icon(action), tableId)
+    diff.pushLog(query)
+    if (diff.pushTest)
+      return done()
+    db.query(query, function (err) {
+      if (err)
+        diff.pushLog(chalk.red(err))
+      done()
+    })
   }, done)
+}
+
+Db3Config.prototype.sync = function (d, done) {
+  var self = this
+  self.pull(function (err, data) {
+    self.push(_.extend(self.diff(d.config, data), d), done)
+  })
 }
 
 var expand = {
@@ -124,10 +163,20 @@ var expand = {
       value = {}
     if (_.isNumber(value))
       value = {field: _.object([[key, value]])}
+    if (_.isString(value))
+      value = [value]
+    if (_.isArray(value))
+      value = {field: value}
     if (key)
       value.id = key
     if (!value.field)
       value.field = value.id
+    if (_.isArray(value.field))
+      value.field = _.map(value.field, function (field) {
+        if (!field.match(/\(\d+\)$/))
+          return field
+        return field.re
+      })
     expand.toList(value, 'field')
     if (list)
       list[key] = value
@@ -163,13 +212,16 @@ var expand = {
 var qs = {
   field: function (field) {
     expand.field(field)
-    var query = db.format('??', field.id) + ' ' + field.dataType
+    var query = format('??', field.id)
+    if (field.alter == 'drop')
+      return query
+    query += ' ' + field.dataType
     if (field.size)
       query += '(' + field.size + ')'
     if (field.notNull)
       query += ' not null'
     if (!_.isUndefined(field.default) && (field.dataType != 'text'))
-      query += db.format(' default ?', field.default)
+      query += format(' default ?', field.default)
     if (field.primaryKey)
       query += ' primary key'
     if (field.autoIncrement)
@@ -178,12 +230,14 @@ var qs = {
   },
   key: function (key) {
     expand.key(key)
-    var query = ''
+    var query = 'key ' + format('??', key.id)
+    if (key.alter == 'drop')
+      return query
     if (key.unique)
-      query += 'unique '
-    query += 'key ' + db.format('??', key.id) + '(' +
+      query = 'unique ' + query
+    query += '(' +
     _.map(key.field, function (value, key) {
-      var query = db.format('??', key)
+      var query = format('??', key)
       if (_.isNumber(value))
         query += '(' + value + ')'
       return query
@@ -192,7 +246,7 @@ var qs = {
   },
   createTable: function (table) {
     expand.table(table)
-    return db.format('create table ?? ', table.id) + '(' +
+    return format('create table ?? ', table.id) + '(' +
       [].concat(
         _.map(table.field, function (value, key) {return qs.field(value)}),
         _.map(table.key, function (value, key) {return qs.key(value)})
@@ -200,16 +254,14 @@ var qs = {
   },
   dropTable: function (table) {
     expand.table(table)
-    return db.format('drop table ?? ', table.id)
+    return format('drop table ?? ', table.id)
   },
   alterTable: function (table) {
     expand.table(table)
-    return db.format('alter table ?? ', table.id) +
+    return format('alter table ?? ', table.id) +
     [].concat(
       _.map(_.filter(table.field, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.field(d)}),
       _.map(_.filter(table.key, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.key(d)})
     ).join(', ')
   }
 }
-
-module.exports.qs = qs

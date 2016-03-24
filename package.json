@@ -1,6 +1,6 @@
 {
   "name": "db3-config",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Db3 config is a tool for syncing SQL database structure with JSON config.",
   "scripts": {
     "test": "mocha"
@@ -28,6 +28,7 @@
     "async": "1.5.2",
     "chalk": "1.1.1",
     "ucfirst": "1.0.0",
-    "underscore": "1.8.3"
+    "underscore": "1.8.3",
+    "sqlstring": "1.0.0"
   }
 }
