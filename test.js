@@ -138,8 +138,12 @@ describe('db3Config', function () {
   describe.skip('#sync', function () {
     it('syncs', function (done) {
       db3Config.sync({
-        config: {table: require('./test')},
-        pushLog: console.log
+        config: {table: require('./type')},
+        push: {
+          log: console.log,
+          test: true,
+          stash: true
+        }
       }, function (err, data) {
         done()
       })

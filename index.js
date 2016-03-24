@@ -88,32 +88,37 @@ Db3Config.prototype.diff = function (config, dbConfig) {
 
 Db3Config.prototype.push = function (diff, done) {
   var db = this.db
-  _.defaults(diff, {
-    pushLog: _.noop
+  _.defaults(diff, {push: {}})
+  _.defaults(diff.push, {
+    log: _.noop,
   })
+  var icon = function (action) {
+    if (action == 'ok')
+      return chalk.green('✓')
+    if (action == 'drop')
+      return chalk.red('×')
+    return chalk.yellow('!')
+  }
   expand.db(diff)
   async.eachSeries(_.keys(diff.table), function (tableId, done) {
     var table = diff.table[tableId]
-    var icon = function (action) {
-      if (action == 'ok')
-        return chalk.green('✓')
-      if (action == 'drop')
-        return chalk.red('×')
-      return chalk.yellow('!')
-    }
     var action = _.find(['create', 'drop', 'alter'], function (d) {return table[d]})
     if (!action) {
-      diff.pushLog(icon('ok'), tableId)
+      diff.push.log(icon('ok'), tableId)
       return done()
     }
+    if (diff.push.stash && (action == 'drop'))
+      action = 'stash'
     var query = qs[action + 'Table'](table)
-    diff.pushLog(icon(action), tableId)
-    diff.pushLog(query)
-    if (diff.pushTest)
+    diff.push.log(icon(action), tableId)
+    diff.push.log(query)
+    if (diff.push.test)
+      return done()
+    if (diff.push.noDrop && (action == 'drop'))
       return done()
     db.query(query, function (err) {
       if (err)
-        diff.pushLog(chalk.red(err))
+        diff.push.log(chalk.red(err))
       done()
     })
   }, done)
@@ -259,5 +264,9 @@ var qs = {
       _.map(_.filter(table.field, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.field(d)}),
       _.map(_.filter(table.key, function (d) {return d.alter}), function (d) {return d.alter + ' ' + qs.key(d)})
     ).join(', ')
+  },
+  stashTable: function (table) {
+    expand.table(table)
+    return format('rename table ?? to stash.??', [table.id, (+new Date) + '_' + table.id])
   }
 }
